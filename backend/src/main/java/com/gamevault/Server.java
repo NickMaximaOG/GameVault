@@ -19,7 +19,7 @@ import java.util.concurrent.Executors;
  * (no stack traces to clients) and one structured JSON log line per request.
  */
 public final class Server {
-    public enum Access { PUBLIC, USER, ADMIN }
+    public enum Access { PUBLIC, OPTIONAL_USER, USER, ADMIN }
 
     @FunctionalInterface
     public interface Handler { Object handle(Ctx c) throws Exception; }
@@ -118,7 +118,14 @@ public final class Server {
                 c.ex.getResponseHeaders().set("Retry-After", "60");
                 throw new ApiException(429, "rate_limited", "Too many attempts. Please wait a minute.");
             }
-            if (r.access != Access.PUBLIC) {
+            if (r.access == Access.OPTIONAL_USER) {
+                String h = c.ex.getRequestHeaders().getFirst("Authorization");
+                if (h != null) {
+                    if (!h.regionMatches(true, 0, "Bearer ", 0, 7)) throw ApiException.unauthorized("Invalid session");
+                    c.user = auth.authenticate(h.substring(7).trim())
+                            .orElseThrow(() -> ApiException.unauthorized("Your session has expired. Please sign in again."));
+                }
+            } else if (r.access != Access.PUBLIC) {
                 String h = c.ex.getRequestHeaders().getFirst("Authorization");
                 if (h == null || !h.regionMatches(true, 0, "Bearer ", 0, 7))
                     throw ApiException.unauthorized("Sign in required");

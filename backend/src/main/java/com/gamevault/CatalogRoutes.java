@@ -18,9 +18,11 @@ final class CatalogRoutes {
     static void register(Server s, Db db) {
         String p = "/api/v1/catalog";
 
-        s.route("GET", p + "/lookups", Server.Access.PUBLIC, c -> {
+        s.route("GET", p + "/lookups", Server.Access.OPTIONAL_USER, c -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("genres", db.query("SELECT genre_id, name FROM Genre ORDER BY name"));
+            m.put("developers", db.query("SELECT developer_id, name FROM Developer ORDER BY name"));
+            m.put("publishers", db.query("SELECT publisher_id, name FROM Publisher ORDER BY name"));
             m.put("platforms", db.query("SELECT platform_id, name FROM Platform ORDER BY name"));
             m.put("ageRatings", db.query(
                     "SELECT age_rating_id, rating_authority, label, minimum_age FROM Age_Rating "
@@ -32,9 +34,15 @@ final class CatalogRoutes {
 
         // GET /catalog/games?q=&genres=1,3&match=all|any&platformId=&ageRatingId=&minRating=
         //                   &sort=title|rating|release|popularity&dir=asc|desc&page=1&size=12
-        s.route("GET", p + "/games", Server.Access.PUBLIC, c -> {
+        s.route("GET", p + "/games", Server.Access.OPTIONAL_USER, c -> {
             StringBuilder where = new StringBuilder(" WHERE 1 = 1");
             List<Object> args = new ArrayList<>();
+            if (c.user != null) {
+                where.append(" AND NOT EXISTS (SELECT 1 FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id = gar.age_rating_id "
+                        + "WHERE gar.game_id = c.game_id AND ar.minimum_age > COALESCE((SELECT TIMESTAMPDIFF(YEAR, u.date_of_birth, CURDATE()) "
+                        + "FROM User u WHERE u.user_id = ?), 99))");
+                args.add(c.user.id());
+            }
 
             String q = c.q("q");
             if (q != null && !q.isBlank()) {
@@ -98,8 +106,15 @@ final class CatalogRoutes {
             return out;
         });
 
-        s.route("GET", p + "/games/{id}", Server.Access.PUBLIC, c -> {
+        s.route("GET", p + "/games/{id}", Server.Access.OPTIONAL_USER, c -> {
             int id = c.pathInt("id");
+            if (c.user != null) {
+                Map<String, Object> age = db.one("SELECT COALESCE(TIMESTAMPDIFF(YEAR, date_of_birth, CURDATE()), 99) AS age FROM User WHERE user_id = ?", c.user.id());
+                Map<String, Object> restricted = db.one("SELECT MAX(ar.minimum_age) AS min_age FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id = gar.age_rating_id WHERE gar.game_id = ?", id);
+                int userAge = ((Number) age.get("age")).intValue();
+                int minAge = restricted == null || restricted.get("min_age") == null ? 0 : ((Number) restricted.get("min_age")).intValue();
+                if (userAge < minAge) throw ApiException.forbidden("Age restricted: this game requires an age of " + minAge + " or above.");
+            }
             Map<String, Object> game = db.one("SELECT * FROM v_game_catalog WHERE game_id = ?", id);
             if (game == null) throw ApiException.notFound("Game not found");
             Map<String, Object> m = new LinkedHashMap<>(game);
@@ -107,13 +122,14 @@ final class CatalogRoutes {
                     + "JOIN Genre gn ON gn.genre_id = gg.genre_id WHERE gg.game_id = ? ORDER BY gn.name", id));
             m.put("platformList", db.query("SELECT p.platform_id, p.name, gp.platform_release_date FROM Game_Platform gp "
                     + "JOIN Platform p ON p.platform_id = gp.platform_id WHERE gp.game_id = ? ORDER BY p.name", id));
-            m.put("ageRatingList", db.query("SELECT ar.rating_authority, ar.label, ar.minimum_age FROM Game_Age_Rating gar "
+            m.put("ageRatingList", db.query("SELECT ar.age_rating_id, ar.rating_authority, ar.label, ar.minimum_age FROM Game_Age_Rating gar "
                     + "JOIN Age_Rating ar ON ar.age_rating_id = gar.age_rating_id WHERE gar.game_id = ? "
                     + "ORDER BY ar.rating_authority", id));
             m.put("achievements", db.query(
-                    "SELECT achievement_id, CASE WHEN is_hidden = 1 THEN 'Hidden achievement' ELSE name END AS name, "
+                    "SELECT achievement_id, rarity, CASE WHEN is_hidden = 1 THEN 'Hidden achievement' ELSE name END AS name, "
                     + "CASE WHEN is_hidden = 1 THEN NULL ELSE description END AS description, points, is_hidden "
                     + "FROM Achievement WHERE game_id = ? ORDER BY points, achievement_id", id));
+            m.put("screenshots", db.query("SELECT screenshot_id, image_url, caption FROM Game_Screenshot WHERE game_id = ? ORDER BY sort_order, screenshot_id", id));
             m.put("reviews", db.query("SELECT u.username, r.rating, r.review_text, r.review_date FROM v_rating r "
                     + "JOIN v_user u ON u.user_id = r.user_id WHERE r.game_id = ? "
                     + "ORDER BY r.review_date DESC, r.rating_id DESC LIMIT 20", id));

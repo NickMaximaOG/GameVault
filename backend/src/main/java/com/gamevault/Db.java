@@ -118,6 +118,14 @@ public final class Db implements AutoCloseable {
         }
     }
 
+    public static long insert(Connection c, String sql, Object... params) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            bind(ps, params);
+            ps.executeUpdate();
+            try (ResultSet k = ps.getGeneratedKeys()) { return k.next() ? k.getLong(1) : -1; }
+        }
+    }
+
     public static int update(Connection c, String sql, Object... params) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             bind(ps, params);
