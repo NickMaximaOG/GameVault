@@ -68,6 +68,13 @@ check("schema.sql loads without errors", rc == 0, err[:300])
 if rc != 0:
     sys.exit(1)
 check("seed load wrote no audit rows", val("SELECT COUNT(*) FROM Audit_Log") == "0")
+check("demo friendship is pre-connected", val("SELECT COUNT(*) FROM Friendship f JOIN User a ON a.user_id=f.requester_id JOIN User b ON b.user_id=f.recipient_id WHERE a.username='NickMaxima' AND b.username='Dibu2007' AND f.status='ACCEPTED'") == "1")
+restricted = val("SELECT CONCAT(gp.game_id, ',', gp.platform_id) FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id=gar.age_rating_id JOIN Game_Platform gp ON gp.game_id=gar.game_id WHERE ar.minimum_age >= 18 LIMIT 1")
+if restricted:
+    gid, pid = restricted.split(',')
+    expect_error("Xlitz cannot add an 18+ game", f"CALL sp_add_to_collection(11, {gid}, {pid}, CURRENT_DATE, 0, 1, @gv_out)", "FORBIDDEN")
+else:
+    check("Xlitz age guard fixture exists", False, "no 18+ rated game with a supported platform")
 
 # ------------------------------------------------------------ 2. validation
 print("2. validation.sql")

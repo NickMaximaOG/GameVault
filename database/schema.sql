@@ -120,6 +120,7 @@ CREATE TABLE User (
     last_login_at      DATETIME      NULL,
     join_date          DATE          NOT NULL DEFAULT (CURRENT_DATE),
     profile_picture    VARCHAR(500)  NULL,
+    date_of_birth      DATE          NULL,
     deleted_at         TIMESTAMP     NULL DEFAULT NULL,
     created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -131,6 +132,37 @@ CREATE TABLE User (
     CONSTRAINT chk_user_email    CHECK (email LIKE '%_@_%.__%'),
     CONSTRAINT chk_user_failed   CHECK (failed_login_count >= 0)
 ) ENGINE=InnoDB;
+
+-- Friend relationships and in-app notifications ----------------------
+CREATE TABLE Friendship (
+    friendship_id INT NOT NULL AUTO_INCREMENT,
+    requester_id INT NOT NULL,
+    recipient_id INT NOT NULL,
+    status ENUM('PENDING','ACCEPTED') NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (friendship_id),
+    UNIQUE KEY uq_friend_request (requester_id, recipient_id),
+    CONSTRAINT fk_friend_requester FOREIGN KEY (requester_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_friend_recipient FOREIGN KEY (recipient_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT chk_friend_not_self CHECK (requester_id <> recipient_id),
+    INDEX idx_friend_recipient_status (recipient_id, status)
+) ENGINE=InnoDB;
+
+CREATE TABLE Notification (
+    notification_id BIGINT NOT NULL AUTO_INCREMENT,
+    recipient_id INT NOT NULL,
+    actor_id INT NULL,
+    notification_type VARCHAR(40) NOT NULL,
+    message VARCHAR(255) NOT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (notification_id),
+    CONSTRAINT fk_notification_recipient FOREIGN KEY (recipient_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_notification_actor FOREIGN KEY (actor_id) REFERENCES User(user_id) ON DELETE SET NULL,
+    INDEX idx_notification_recipient (recipient_id, is_read, created_at)
+) ENGINE=InnoDB;
+
 
 -- Table 2: Developer -------------------------------------------------
 CREATE TABLE Developer (
@@ -215,6 +247,7 @@ CREATE TABLE Game (
     release_date DATE         NULL,
     description  TEXT         NULL,
     cover_image  VARCHAR(500) NULL,
+    is_upcoming  TINYINT(1) NOT NULL DEFAULT 0,
     developer_id INT          NULL,
     publisher_id INT          NULL,
     deleted_at   TIMESTAMP    NULL DEFAULT NULL,
@@ -228,6 +261,29 @@ CREATE TABLE Game (
         REFERENCES Publisher (publisher_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     INDEX idx_game_title (title),
     FULLTEXT INDEX ft_game_search (title, description)
+) ENGINE=InnoDB;
+
+-- Game screenshots (URLs can point to Steam/CDN or admin-managed media) --
+CREATE TABLE Game_Screenshot (
+    screenshot_id INT NOT NULL AUTO_INCREMENT,
+    game_id INT NOT NULL,
+    image_url VARCHAR(500) NOT NULL,
+    caption VARCHAR(180) NULL,
+    sort_order SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (screenshot_id),
+    CONSTRAINT fk_screenshot_game FOREIGN KEY (game_id) REFERENCES Game(game_id) ON DELETE CASCADE,
+    INDEX idx_screenshot_game (game_id, sort_order)
+) ENGINE=InnoDB;
+
+CREATE TABLE Wishlist (
+    wishlist_id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    game_id INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (wishlist_id),
+    UNIQUE KEY uq_wishlist_user_game (user_id, game_id),
+    CONSTRAINT fk_wishlist_user FOREIGN KEY (user_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_wishlist_game FOREIGN KEY (game_id) REFERENCES Game(game_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- Table 9: Game_Genre (Game M:N Genre) --------------------------------
@@ -366,6 +422,7 @@ CREATE TABLE Achievement (
     description    VARCHAR(255) NULL,
     points         INT          NOT NULL DEFAULT 0,
     is_hidden      BOOLEAN      NOT NULL DEFAULT FALSE,
+    rarity         ENUM('COMMON','RARE','EPIC','LEGENDARY') NOT NULL DEFAULT 'COMMON',
     created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT pk_achievement PRIMARY KEY (achievement_id),
@@ -453,7 +510,7 @@ WHERE u.deleted_at IS NULL;
 
 -- Active games
 CREATE OR REPLACE VIEW v_game AS
-SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image,
+SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image, g.is_upcoming,
        g.developer_id, g.publisher_id
 FROM Game g
 WHERE g.deleted_at IS NULL;
@@ -485,7 +542,7 @@ CREATE OR REPLACE VIEW v_collection AS
 SELECT ug.user_game_id, ug.user_id, ug.game_id, g.title, g.cover_image,
        ug.platform_id, p.name AS platform,
        ug.purchase_date, ug.purchase_price, ug.playtime_hours,
-       ug.status_id, ug.status, ug.started_at, ug.completed_at, ug.row_version,
+       ug.status_id, ug.status, ug.started_at, ug.completed_at, ug.row_version, ug.created_at, ug.updated_at, lp.last_played_at,
        COALESCE(t.total, 0)        AS achievements_total,
        COALESCE(d.unlocked, 0)     AS achievements_unlocked,
        COALESCE(d.points, 0)       AS points_earned,
@@ -502,13 +559,14 @@ LEFT JOIN (SELECT ua.user_game_id,
              JOIN Achievement a ON a.achievement_id = ua.achievement_id
             GROUP BY ua.user_game_id) d
        ON d.user_game_id = ug.user_game_id
-LEFT JOIN v_rating r ON r.user_id = ug.user_id AND r.game_id = ug.game_id;
+LEFT JOIN v_rating r ON r.user_id = ug.user_id AND r.game_id = ug.game_id
+LEFT JOIN (SELECT user_game_id, MAX(started_at) AS last_played_at FROM Playtime_Session GROUP BY user_game_id) lp ON lp.user_game_id = ug.user_game_id;
 
 -- Catalogue: one row per active game with every many-to-many list collapsed
 CREATE OR REPLACE VIEW v_game_catalog AS
-SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image,
-       dev.name  AS developer,
-       pub.name  AS publisher,
+SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image, g.is_upcoming,
+       dev.developer_id, dev.name AS developer,
+       pub.publisher_id, pub.name AS publisher,
        ar.age_ratings,
        gen.genres,
        plat.platforms,
@@ -576,7 +634,7 @@ SELECT ug.user_game_id, ug.user_id, a.achievement_id,
             THEN 'Hidden achievement' ELSE a.name END        AS name,
        CASE WHEN a.is_hidden = 1 AND COALESCE(ua.is_unlocked, 0) = 0
             THEN NULL ELSE a.description END                 AS description,
-       a.points, a.is_hidden,
+       a.points, a.is_hidden, a.rarity,
        COALESCE(ua.progress, 0)    AS progress,
        COALESCE(ua.is_unlocked, 0) AS is_unlocked,
        ua.unlocked_at
@@ -965,6 +1023,14 @@ INSERT INTO User (user_id, username, email, password_hash, role_id, join_date, p
   (6, 'ishita_r', 'ishita.r@example.com', 'pbkdf2-sha256$600000$NyBgw2m1j82P5YVDx3huNw==$2XlFd2xkx4OPJYg6j5Mia4hgBKZMFgE2ssMuTgmWyDc=', 1, '2021-11-30', 'https://avatars.example.com/ishita_r.png'),
   (7, 'new_player_07', 'new.player07@example.com', 'pbkdf2-sha256$600000$cKI9AsYxmE1rKYnnaAgBMQ==$Wz7C8Rp0MsqEl+/eKZC4M7PH9aN6KjvC20Cr4/DKN6c=', 1, '2026-10-20', NULL);
 
+-- Portal demo accounts; all initially use the documented demo password.
+INSERT INTO User (user_id, username, email, password_hash, role_id, join_date, date_of_birth) VALUES
+  (8, 'admin', 'admin@gamevault.local', 'pbkdf2-sha256$600000$R1ZkZW1vU2FsdDAwMDAwMQ==$VPwxfHrmgP05WcnvbSbhfgIvNv5CNyW0zJen1qgaO4c=', 2, CURRENT_DATE, NULL),
+  (9, 'NickMaxima', 'nickmaxima@gamevault.local', 'pbkdf2-sha256$600000$R1ZkZW1vU2FsdDAwMDAwMQ==$VPwxfHrmgP05WcnvbSbhfgIvNv5CNyW0zJen1qgaO4c=', 1, CURRENT_DATE, NULL),
+  (10, 'Dibu2007', 'dibu2007@gamevault.local', 'pbkdf2-sha256$600000$R1ZkZW1vU2FsdDAwMDAwMQ==$VPwxfHrmgP05WcnvbSbhfgIvNv5CNyW0zJen1qgaO4c=', 1, CURRENT_DATE, NULL),
+  (11, 'Xlitz', 'xlitz@gamevault.local', 'pbkdf2-sha256$600000$R1ZkZW1vU2FsdDAwMDAwMQ==$VPwxfHrmgP05WcnvbSbhfgIvNv5CNyW0zJen1qgaO4c=', 1, CURRENT_DATE, '2010-01-01');
+INSERT INTO Friendship (requester_id, recipient_id, status) SELECT a.user_id, b.user_id, 'ACCEPTED' FROM User a JOIN User b WHERE a.username = 'NickMaxima' AND b.username = 'Dibu2007';
+
 -- Developer (17 rows)
 INSERT INTO Developer (developer_id, name, country, website) VALUES
   (1, 'Santa Monica Studio', 'United States', 'https://sms.playstation.com'),
@@ -1050,28 +1116,43 @@ INSERT INTO Game_Mode (mode_id, name, description) VALUES
   (5, 'Local Multiplayer', 'Players compete on the same device or screen.');
 
 -- Game (20 rows)
--- Cover URLs are placeholders. Two games have no cover to show the nullable column.
+-- Cover art uses Steam CDN library artwork where available; fallback art is illustrative.
 INSERT INTO Game (game_id, title, release_date, description, cover_image, developer_id, publisher_id) VALUES
-  (1, 'God of War Ragnarök', '2022-11-09', 'Kratos and Atreus travel the Nine Realms as Ragnarök approaches.', 'https://covers.example.com/god-of-war-ragnarök.jpg', 1, 1),
-  (2, 'The Last of Us Part I', '2022-09-02', 'A rebuilt version of the post-pandemic story of Joel and Ellie.', 'https://covers.example.com/the-last-of-us-part-i.jpg', 2, 1),
-  (3, 'Elden Ring', '2022-02-25', 'A huge open-world action RPG set in the Lands Between.', 'https://covers.example.com/elden-ring.jpg', 3, 2),
-  (4, 'Black Myth: Wukong', '2024-08-20', 'An action RPG inspired by Journey to the West.', NULL, 4, 3),
-  (5, 'Cyberpunk 2077', '2020-12-10', 'An open-world action RPG set in the dystopian Night City.', 'https://covers.example.com/cyberpunk-2077.jpg', 5, 4),
-  (6, 'Minecraft', '2011-11-18', 'A block-based sandbox about mining, building and survival.', 'https://covers.example.com/minecraft.jpg', 6, 5),
-  (7, 'Hades', '2020-09-17', 'A roguelike dungeon crawler about escaping the Underworld.', 'https://covers.example.com/hades.jpg', 7, 6),
-  (8, 'Baldur''s Gate 3', '2023-08-03', 'A turn-based, party-driven RPG built on Dungeons & Dragons rules.', 'https://covers.example.com/baldur-s-gate-3.jpg', 8, 7),
-  (9, 'Forza Horizon 5', '2021-11-09', 'An open-world racing festival set in Mexico.', 'https://covers.example.com/forza-horizon-5.jpg', 9, 5),
-  (10, 'Hollow Knight', '2017-02-24', 'A hand-drawn metroidvania set in the ruined insect kingdom of Hallownest.', 'https://covers.example.com/hollow-knight.jpg', 10, 8),
-  (11, 'Stardew Valley', '2016-02-26', 'A farming and life simulation with a deep social system.', 'https://covers.example.com/stardew-valley.jpg', 11, 9),
-  (12, 'Celeste', '2018-01-25', 'A tight precision platformer about climbing a mountain.', 'https://covers.example.com/celeste.jpg', 12, 10),
-  (13, 'The Witcher 3: Wild Hunt', '2015-05-19', 'A story-rich open-world RPG following the monster hunter Geralt.', 'https://covers.example.com/the-witcher-3--wild-hunt.jpg', 5, 4),
-  (14, 'Red Dead Redemption 2', '2018-10-26', 'A western epic about the decline of the Van der Linde gang.', 'https://covers.example.com/red-dead-redemption-2.jpg', 13, 11),
-  (15, 'The Legend of Zelda: Breath of the Wild', '2017-03-03', 'An open-air Zelda adventure built around exploration and physics.', 'https://covers.example.com/the-legend-of-zelda--breath-of-the-wild.jpg', 14, 12),
-  (16, 'DOOM Eternal', '2020-03-20', 'A fast first-person shooter about ripping through demonic invasions.', 'https://covers.example.com/doom-eternal.jpg', 15, 13),
-  (17, 'Mario Kart 8 Deluxe', '2017-04-28', 'Arcade kart racing with items, 48 tracks and split-screen play.', 'https://covers.example.com/mario-kart-8-deluxe.jpg', 14, 12),
-  (18, 'Helldivers 2', '2024-02-08', 'A cooperative third-person shooter about spreading managed democracy.', 'https://covers.example.com/helldivers-2.jpg', 16, 1),
-  (19, 'Sekiro: Shadows Die Twice', '2019-03-22', 'A posture-based action adventure set in sengoku-era Japan.', NULL, 3, 14),
-  (20, 'Sid Meier''s Civilization VI', '2016-10-21', 'A turn-based 4X strategy game about leading a civilization through history.', 'https://covers.example.com/sid-meier-s-civilization-vi.jpg', 17, 15);
+  (1, 'God of War Ragnarök', '2022-11-09', 'Kratos and Atreus travel the Nine Realms as Ragnarök approaches.', 'https://cdn.akamai.steamstatic.com/steam/apps/2322010/library_600x900.jpg', 1, 1),
+  (2, 'The Last of Us Part I', '2022-09-02', 'A rebuilt version of the post-pandemic story of Joel and Ellie.', 'https://cdn.akamai.steamstatic.com/steam/apps/1888930/library_600x900.jpg', 2, 1),
+  (3, 'Elden Ring', '2022-02-25', 'A huge open-world action RPG set in the Lands Between.', 'https://cdn.akamai.steamstatic.com/steam/apps/1245620/library_600x900.jpg', 3, 2),
+  (4, 'Black Myth: Wukong', '2024-08-20', 'An action RPG inspired by Journey to the West.', 'https://cdn.akamai.steamstatic.com/steam/apps/2358720/library_600x900.jpg', 4, 3),
+  (5, 'Cyberpunk 2077', '2020-12-10', 'An open-world action RPG set in the dystopian Night City.', 'https://cdn.akamai.steamstatic.com/steam/apps/1091500/library_600x900.jpg', 5, 4),
+  (6, 'Minecraft', '2011-11-18', 'A block-based sandbox about mining, building and survival.', 'https://images.unsplash.com/photo-1607513746994-51f730a44832?w=700&auto=format&fit=crop', 6, 5),
+  (7, 'Hades', '2020-09-17', 'A roguelike dungeon crawler about escaping the Underworld.', 'https://cdn.akamai.steamstatic.com/steam/apps/1145360/library_600x900.jpg', 7, 6),
+  (8, 'Baldur''s Gate 3', '2023-08-03', 'A turn-based, party-driven RPG built on Dungeons & Dragons rules.', 'https://cdn.akamai.steamstatic.com/steam/apps/1086940/library_600x900.jpg', 8, 7),
+  (9, 'Forza Horizon 5', '2021-11-09', 'An open-world racing festival set in Mexico.', 'https://cdn.akamai.steamstatic.com/steam/apps/1551360/library_600x900.jpg', 9, 5),
+  (10, 'Hollow Knight', '2017-02-24', 'A hand-drawn metroidvania set in the ruined insect kingdom of Hallownest.', 'https://cdn.akamai.steamstatic.com/steam/apps/367520/library_600x900.jpg', 10, 8),
+  (11, 'Stardew Valley', '2016-02-26', 'A farming and life simulation with a deep social system.', 'https://cdn.akamai.steamstatic.com/steam/apps/413150/library_600x900.jpg', 11, 9),
+  (12, 'Celeste', '2018-01-25', 'A tight precision platformer about climbing a mountain.', 'https://cdn.akamai.steamstatic.com/steam/apps/504230/library_600x900.jpg', 12, 10),
+  (13, 'The Witcher 3: Wild Hunt', '2015-05-19', 'A story-rich open-world RPG following the monster hunter Geralt.', 'https://cdn.akamai.steamstatic.com/steam/apps/292030/library_600x900.jpg', 5, 4),
+  (14, 'Red Dead Redemption 2', '2018-10-26', 'A western epic about the decline of the Van der Linde gang.', 'https://cdn.akamai.steamstatic.com/steam/apps/1174180/library_600x900.jpg', 13, 11),
+  (15, 'The Legend of Zelda: Breath of the Wild', '2017-03-03', 'An open-air Zelda adventure built around exploration and physics.', 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=700&auto=format&fit=crop', 14, 12),
+  (16, 'DOOM Eternal', '2020-03-20', 'A fast first-person shooter about ripping through demonic invasions.', 'https://cdn.akamai.steamstatic.com/steam/apps/782330/library_600x900.jpg', 15, 13),
+  (17, 'Mario Kart 8 Deluxe', '2017-04-28', 'Arcade kart racing with items, 48 tracks and split-screen play.', 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=700&auto=format&fit=crop', 14, 12),
+  (18, 'Helldivers 2', '2024-02-08', 'A cooperative third-person shooter about spreading managed democracy.', 'https://cdn.akamai.steamstatic.com/steam/apps/553850/library_600x900.jpg', 16, 1),
+  (19, 'Sekiro: Shadows Die Twice', '2019-03-22', 'A posture-based action adventure set in sengoku-era Japan.', 'https://cdn.akamai.steamstatic.com/steam/apps/814380/library_600x900.jpg', 3, 14),
+  (20, 'Sid Meier''s Civilization VI', '2016-10-21', 'A turn-based 4X strategy game about leading a civilization through history.', 'https://cdn.akamai.steamstatic.com/steam/apps/289070/library_600x900.jpg', 17, 15);
+
+-- Game_Screenshot (sample screenshots)
+INSERT INTO Game_Screenshot (game_id, image_url, caption, sort_order) VALUES
+  (1, 'https://cdn.akamai.steamstatic.com/steam/apps/2322010/header.jpg', 'Official game artwork', 1),
+  (2, 'https://cdn.akamai.steamstatic.com/steam/apps/1888930/header.jpg', 'Official game artwork', 1),
+  (3, 'https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg', 'Official game artwork', 1),
+  (4, 'https://cdn.akamai.steamstatic.com/steam/apps/2358720/header.jpg', 'Official game artwork', 1),
+  (5, 'https://cdn.akamai.steamstatic.com/steam/apps/1091500/header.jpg', 'Official game artwork', 1),
+  (7, 'https://cdn.akamai.steamstatic.com/steam/apps/1145360/header.jpg', 'Official game artwork', 1),
+  (8, 'https://cdn.akamai.steamstatic.com/steam/apps/1086940/header.jpg', 'Official game artwork', 1),
+  (9, 'https://cdn.akamai.steamstatic.com/steam/apps/1551360/header.jpg', 'Official game artwork', 1),
+  (10, 'https://cdn.akamai.steamstatic.com/steam/apps/367520/header.jpg', 'Official game artwork', 1),
+  (11, 'https://cdn.akamai.steamstatic.com/steam/apps/413150/header.jpg', 'Official game artwork', 1),
+  (12, 'https://cdn.akamai.steamstatic.com/steam/apps/504230/header.jpg', 'Official game artwork', 1),
+  (13, 'https://cdn.akamai.steamstatic.com/steam/apps/292030/header.jpg', 'Official game artwork', 1);
 
 -- Game_Age_Rating (30 rows)
 -- ESRB classes checked against esrb.org for Black Myth: Wukong, Hades, Hollow Knight, Civilization VI and Helldivers 2; the others and all PEGI classes are from general knowledge.
@@ -1311,6 +1392,11 @@ INSERT INTO User_Game (user_game_id, user_id, game_id, platform_id, purchase_dat
   (39, 6, 8, 1, '2023-08-03', 59.99, 25.5, 4, '2023-08-04', NULL),
   (40, 6, 3, 1, '2022-02-25', 59.99, 83.3, 3, '2022-02-26', '2022-05-10');
 
+-- Shared-progress demo entries for NickMaxima and Dibu2007.
+INSERT INTO User_Game (user_game_id, user_id, game_id, platform_id, purchase_date, purchase_price, baseline_hours, status_id, started_at, completed_at) VALUES
+  (41, 9, 3, 1, '2026-10-01', 0.00, 34.2, 2, '2026-10-01', NULL),
+  (42, 10, 7, 1, '2026-09-15', 0.00, 24.8, 2, '2026-09-15', NULL);
+
 -- Playtime_Session (82 rows)
 INSERT INTO Playtime_Session (user_game_id, started_at, duration_minutes, note) VALUES
   (1, '2024-10-20 17:30:00', 36, NULL),
@@ -1396,6 +1482,10 @@ INSERT INTO Playtime_Session (user_game_id, started_at, duration_minutes, note) 
   (40, '2022-04-03 13:15:00', 120, 'Short break session'),
   (40, '2022-04-19 22:30:00', 762, NULL);
 
+INSERT INTO Playtime_Session (user_game_id, started_at, duration_minutes, note) VALUES
+  (41, '2026-11-15 19:30:00', 85, 'Demo friend progress'),
+  (42, '2026-11-16 20:00:00', 50, 'Demo friend progress');
+
 -- Rating (25 rows)
 -- Black Myth: Wukong, Sekiro, Mario Kart 8 Deluxe, DOOM Eternal and Civilization VI have no ratings on purpose.
 INSERT INTO Rating (rating_id, user_id, game_id, rating, review_text, review_date) VALUES
@@ -1478,6 +1568,8 @@ INSERT INTO Achievement (achievement_id, game_id, name, description, points, is_
   (48, 13, 'Wolf School Initiate', 'Complete the first contract.', 10, 0),
   (49, 13, 'Gwent Champion', 'Win 20 Gwent matches.', 50, 0),
   (50, 13, 'End of Journey', 'Finish the main story.', 100, 0);
+
+UPDATE Achievement SET rarity = CASE WHEN points >= 100 THEN 'LEGENDARY' WHEN points >= 50 THEN 'EPIC' WHEN points >= 25 THEN 'RARE' ELSE 'COMMON' END;
 
 -- User_Achievement (122 rows)
 -- Unlocked => timestamp + 100%. Locked => no timestamp + progress below 100.
@@ -1605,6 +1697,13 @@ INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at
   (40, 11, 3, '2022-04-20 17:23:51', 100.0, 1),
   (40, 12, 3, NULL, 47.97, 0);
 
+INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)
+SELECT 41, achievement_id, game_id, '2026-10-20 12:00:00', 100, 1 FROM Achievement WHERE name = 'Lands Between Explorer';
+INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)
+SELECT 41, achievement_id, game_id, NULL, 70, 0 FROM Achievement WHERE name = 'Shardbearer Slayer';
+INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)
+SELECT 42, achievement_id, game_id, '2026-10-01 12:00:00', 100, 1 FROM Achievement WHERE name = 'Out of the Underworld';
+
 -- ---------------------------------------------------------------------
 -- 6. TRIGGERS (installed after the seed data on purpose, see D10)
 --    a) optimistic-locking version bump   b) audit trail   c) Audit_Log guard
@@ -1632,17 +1731,17 @@ CREATE TRIGGER trg_user_ad AFTER DELETE ON User FOR EACH ROW
 
 CREATE TRIGGER trg_game_ai AFTER INSERT ON Game FOR EACH ROW
   INSERT INTO Audit_Log (table_name, record_pk, action, changed_by, new_values)
-  VALUES ('Game', CAST(NEW.game_id AS CHAR), 'INSERT', @app_user_id, JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at));
+  VALUES ('Game', CAST(NEW.game_id AS CHAR), 'INSERT', @app_user_id, JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'description', NEW.description, 'cover_image', NEW.cover_image, 'is_upcoming', NEW.is_upcoming, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at));
 
 -- UPDATE is logged only when an audited column really changed
 CREATE TRIGGER trg_game_au AFTER UPDATE ON Game FOR EACH ROW
   INSERT INTO Audit_Log (table_name, record_pk, action, changed_by, old_values, new_values)
-  SELECT 'Game', CAST(NEW.game_id AS CHAR), 'UPDATE', @app_user_id, JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at), JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at)
-  FROM DUAL WHERE NOT (JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at) <=> JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at));
+  SELECT 'Game', CAST(NEW.game_id AS CHAR), 'UPDATE', @app_user_id, JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'description', OLD.description, 'cover_image', OLD.cover_image, 'is_upcoming', OLD.is_upcoming, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at), JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'description', NEW.description, 'cover_image', NEW.cover_image, 'is_upcoming', NEW.is_upcoming, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at)
+  FROM DUAL WHERE NOT (JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'description', OLD.description, 'cover_image', OLD.cover_image, 'is_upcoming', OLD.is_upcoming, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at) <=> JSON_OBJECT('game_id', NEW.game_id, 'title', NEW.title, 'release_date', NEW.release_date, 'description', NEW.description, 'cover_image', NEW.cover_image, 'is_upcoming', NEW.is_upcoming, 'developer_id', NEW.developer_id, 'publisher_id', NEW.publisher_id, 'deleted_at', NEW.deleted_at));
 
 CREATE TRIGGER trg_game_ad AFTER DELETE ON Game FOR EACH ROW
   INSERT INTO Audit_Log (table_name, record_pk, action, changed_by, old_values)
-  VALUES ('Game', CAST(OLD.game_id AS CHAR), 'DELETE', @app_user_id, JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at));
+  VALUES ('Game', CAST(OLD.game_id AS CHAR), 'DELETE', @app_user_id, JSON_OBJECT('game_id', OLD.game_id, 'title', OLD.title, 'release_date', OLD.release_date, 'description', OLD.description, 'cover_image', OLD.cover_image, 'is_upcoming', OLD.is_upcoming, 'developer_id', OLD.developer_id, 'publisher_id', OLD.publisher_id, 'deleted_at', OLD.deleted_at));
 
 CREATE TRIGGER trg_user_game_ai AFTER INSERT ON User_Game FOR EACH ROW
   INSERT INTO Audit_Log (table_name, record_pk, action, changed_by, new_values)
@@ -1712,6 +1811,24 @@ BEGIN
     IF COALESCE(@gv_allow_audit_scrub, 0) <> 1 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'FORBIDDEN: Audit_Log is append-only';
     END IF;
+END$$
+DELIMITER ;
+
+-- Server-side age guard: block age-ineligible collection entries even if UI checks are bypassed.
+DELIMITER $$
+CREATE TRIGGER trg_user_game_age_guard_bi BEFORE INSERT ON User_Game FOR EACH ROW
+BEGIN
+  DECLARE v_age INT DEFAULT 99; DECLARE v_min_age INT DEFAULT 0;
+  SELECT COALESCE(TIMESTAMPDIFF(YEAR,date_of_birth,CURDATE()),99) INTO v_age FROM User WHERE user_id=NEW.user_id;
+  SELECT COALESCE(MAX(ar.minimum_age),0) INTO v_min_age FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id=gar.age_rating_id WHERE gar.game_id=NEW.game_id;
+  IF v_age < v_min_age THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='FORBIDDEN: this game is restricted by your age profile'; END IF;
+END$$
+CREATE TRIGGER trg_user_game_age_guard_bu BEFORE UPDATE ON User_Game FOR EACH ROW
+BEGIN
+  DECLARE v_age INT DEFAULT 99; DECLARE v_min_age INT DEFAULT 0;
+  SELECT COALESCE(TIMESTAMPDIFF(YEAR,date_of_birth,CURDATE()),99) INTO v_age FROM User WHERE user_id=NEW.user_id;
+  SELECT COALESCE(MAX(ar.minimum_age),0) INTO v_min_age FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id=gar.age_rating_id WHERE gar.game_id=NEW.game_id;
+  IF v_age < v_min_age THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='FORBIDDEN: this game is restricted by your age profile'; END IF;
 END$$
 DELIMITER ;
 

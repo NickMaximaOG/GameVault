@@ -16,7 +16,7 @@ WHERE u.deleted_at IS NULL;
 
 -- Active games
 CREATE OR REPLACE VIEW v_game AS
-SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image,
+SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image, g.is_upcoming,
        g.developer_id, g.publisher_id
 FROM Game g
 WHERE g.deleted_at IS NULL;
@@ -48,7 +48,7 @@ CREATE OR REPLACE VIEW v_collection AS
 SELECT ug.user_game_id, ug.user_id, ug.game_id, g.title, g.cover_image,
        ug.platform_id, p.name AS platform,
        ug.purchase_date, ug.purchase_price, ug.playtime_hours,
-       ug.status_id, ug.status, ug.started_at, ug.completed_at, ug.row_version,
+       ug.status_id, ug.status, ug.started_at, ug.completed_at, ug.row_version, ug.created_at, ug.updated_at, lp.last_played_at,
        COALESCE(t.total, 0)        AS achievements_total,
        COALESCE(d.unlocked, 0)     AS achievements_unlocked,
        COALESCE(d.points, 0)       AS points_earned,
@@ -65,13 +65,14 @@ LEFT JOIN (SELECT ua.user_game_id,
              JOIN Achievement a ON a.achievement_id = ua.achievement_id
             GROUP BY ua.user_game_id) d
        ON d.user_game_id = ug.user_game_id
-LEFT JOIN v_rating r ON r.user_id = ug.user_id AND r.game_id = ug.game_id;
+LEFT JOIN v_rating r ON r.user_id = ug.user_id AND r.game_id = ug.game_id
+LEFT JOIN (SELECT user_game_id, MAX(started_at) AS last_played_at FROM Playtime_Session GROUP BY user_game_id) lp ON lp.user_game_id = ug.user_game_id;
 
 -- Catalogue: one row per active game with every many-to-many list collapsed
 CREATE OR REPLACE VIEW v_game_catalog AS
-SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image,
-       dev.name  AS developer,
-       pub.name  AS publisher,
+SELECT g.game_id, g.title, g.release_date, g.description, g.cover_image, g.is_upcoming,
+       dev.developer_id, dev.name AS developer,
+       pub.publisher_id, pub.name AS publisher,
        ar.age_ratings,
        gen.genres,
        plat.platforms,
@@ -139,7 +140,7 @@ SELECT ug.user_game_id, ug.user_id, a.achievement_id,
             THEN 'Hidden achievement' ELSE a.name END        AS name,
        CASE WHEN a.is_hidden = 1 AND COALESCE(ua.is_unlocked, 0) = 0
             THEN NULL ELSE a.description END                 AS description,
-       a.points, a.is_hidden,
+       a.points, a.is_hidden, a.rarity,
        COALESCE(ua.progress, 0)    AS progress,
        COALESCE(ua.is_unlocked, 0) AS is_unlocked,
        ua.unlocked_at

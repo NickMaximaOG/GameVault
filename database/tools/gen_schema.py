@@ -552,6 +552,15 @@ block("Collection_Status", "Collection_Status", ["status_id", "name", "sort_orde
 block("User (7 rows; user 7 deliberately owns no games)", "User",
       ["user_id", "username", "email", "password_hash", "role_id", "join_date", "profile_picture"],
       [(i + 1, u[0], u[1], user_hashes[i], ROLE_ID[u[4]], d(u[2]), u[3]) for i, u in enumerate(users)])
+extra_hash = pbkdf2_hash(DEMO_PASSWORD, b"GVdemoSalt000001")
+w("-- Portal demo accounts; all initially use the documented demo password.")
+w("INSERT INTO User (user_id, username, email, password_hash, role_id, join_date, date_of_birth) VALUES")
+w("  (8, 'admin', 'admin@gamevault.local', " + q(extra_hash) + ", 2, CURRENT_DATE, NULL),")
+w("  (9, 'NickMaxima', 'nickmaxima@gamevault.local', " + q(extra_hash) + ", 1, CURRENT_DATE, NULL),")
+w("  (10, 'Dibu2007', 'dibu2007@gamevault.local', " + q(extra_hash) + ", 1, CURRENT_DATE, NULL),")
+w("  (11, 'Xlitz', 'xlitz@gamevault.local', " + q(extra_hash) + ", 1, CURRENT_DATE, '2010-01-01');")
+w("INSERT INTO Friendship (requester_id, recipient_id, status) SELECT a.user_id, b.user_id, 'ACCEPTED' FROM User a JOIN User b WHERE a.username = 'NickMaxima' AND b.username = 'Dibu2007';")
+w("")
 block("Developer (17 rows)", "Developer", ["developer_id", "name", "country", "website"],
       [(i + 1, *r) for i, r in enumerate(developers)])
 block("Publisher (15 rows)", "Publisher", ["publisher_id", "name", "country", "website"],
@@ -567,13 +576,27 @@ block("Age_Rating (9 rows: 4 ESRB + 5 PEGI)", "Age_Rating",
       [(i + 1, *r) for i, r in enumerate(age_ratings)])
 block("Game_Mode (5 rows)", "Game_Mode", ["mode_id", "name", "description"],
       [(i + 1, *r) for i, r in enumerate(modes)])
+steam_cover_ids = {
+    "God of War Ragnarök": 2322010, "The Last of Us Part I": 1888930, "Elden Ring": 1245620,
+    "Black Myth: Wukong": 2358720, "Cyberpunk 2077": 1091500, "Hades": 1145360,
+    "Baldur's Gate 3": 1086940, "Forza Horizon 5": 1551360, "Hollow Knight": 367520,
+    "Stardew Valley": 413150, "Celeste": 504230, "The Witcher 3: Wild Hunt": 292030,
+    "Red Dead Redemption 2": 1174180, "DOOM Eternal": 782330, "Helldivers 2": 553850,
+    "Sekiro: Shadows Die Twice": 814380, "Sid Meier's Civilization VI": 289070,
+}
+def cover_for(title):
+    if title in steam_cover_ids:
+        return f"https://cdn.akamai.steamstatic.com/steam/apps/{steam_cover_ids[title]}/library_600x900.jpg"
+    if title == "Minecraft": return "https://images.unsplash.com/photo-1607513746994-51f730a44832?w=700&auto=format&fit=crop"
+    return "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=700&auto=format&fit=crop"
 block("Game (20 rows)", "Game",
       ["game_id", "title", "release_date", "description", "cover_image", "developer_id", "publisher_id"],
-      [(i + 1, g[0], d(g[1]), g[5],
-        None if g[0] in ("Black Myth: Wukong", "Sekiro: Shadows Die Twice")
-        else "https://covers.example.com/" + "".join(c if c.isalnum() else "-" for c in g[0].lower()).strip("-") + ".jpg",
-        dev_id[g[2]], pub_id[g[3]]) for i, g in enumerate(games)],
-      "Cover URLs are placeholders. Two games have no cover to show the nullable column.")
+      [(i + 1, g[0], d(g[1]), g[5], cover_for(g[0]), dev_id[g[2]], pub_id[g[3]]) for i, g in enumerate(games)],
+      "Cover art uses Steam CDN library artwork where available; fallback art is illustrative.")
+block("Game_Screenshot (sample screenshots)", "Game_Screenshot",
+      ["game_id", "image_url", "caption", "sort_order"],
+      [(game_id[n], f"https://cdn.akamai.steamstatic.com/steam/apps/{steam_cover_ids[n]}/header.jpg", "Official game artwork", 1)
+       for n in steam_cover_ids if n in game_id][:12])
 gar = [(game_id[g[0]], "ESRB", rating_id[("ESRB", g[4])]) for g in games]
 gar += [(game_id[t], "PEGI", rating_id[("PEGI", lbl)]) for t, lbl in PEGI.items()]
 gar.sort()
@@ -598,9 +621,18 @@ block("User_Game (40 rows)", "User_Game",
         STATUS_ID[r[5]], d(r[7]), d(r[8])) for i, r in enumerate(UG)],
       "Every (game_id, platform_id) pair exists in Game_Platform (enforced by fk_user_game_supported_platform). "
       "Playtime = baseline_hours + sessions.")
+w("-- Shared-progress demo entries for NickMaxima and Dibu2007.")
+w("INSERT INTO User_Game (user_game_id, user_id, game_id, platform_id, purchase_date, purchase_price, baseline_hours, status_id, started_at, completed_at) VALUES")
+w("  (41, 9, 3, 1, '2026-10-01', 0.00, 34.2, 2, '2026-10-01', NULL),")
+w("  (42, 10, 7, 1, '2026-09-15', 0.00, 24.8, 2, '2026-09-15', NULL);")
+w("")
 block(f"Playtime_Session ({len(sessions)} rows)", "Playtime_Session",
       ["user_game_id", "started_at", "duration_minutes", "note"],
       [(s[0], s[1], s[2], s[3]) for s in sessions])
+w("INSERT INTO Playtime_Session (user_game_id, started_at, duration_minutes, note) VALUES")
+w("  (41, '2026-11-15 19:30:00', 85, 'Demo friend progress'),")
+w("  (42, '2026-11-16 20:00:00', 50, 'Demo friend progress');")
+w("")
 block("Rating (25 rows)", "Rating",
       ["rating_id", "user_id", "game_id", "rating", "review_text", "review_date"],
       [(i + 1, user_id[r[0]], game_id[r[1]], r[2], r[3], d(r[4])) for i, r in enumerate(RT)],
@@ -609,17 +641,26 @@ block("Achievement (50 rows)", "Achievement",
       ["achievement_id", "game_id", "name", "description", "points", "is_hidden"],
       [(a[0], game_id[a[1]], a[2], a[3], a[4], a[5]) for a in ach_rows],
       "13 games have achievements; the other 7 have none on purpose. Names are illustrative.")
+w("UPDATE Achievement SET rarity = CASE WHEN points >= 100 THEN 'LEGENDARY' WHEN points >= 50 THEN 'EPIC' WHEN points >= 25 THEN 'RARE' ELSE 'COMMON' END;")
+w("")
 block(f"User_Achievement ({len(ua_rows)} rows)", "User_Achievement",
       ["user_game_id", "achievement_id", "game_id", "unlocked_at", "progress", "is_unlocked"],
       ua_rows,
       "Unlocked => timestamp + 100%. Locked => no timestamp + progress below 100.")
+w("INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)")
+w("SELECT 41, achievement_id, game_id, '2026-10-20 12:00:00', 100, 1 FROM Achievement WHERE name = 'Lands Between Explorer';")
+w("INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)")
+w("SELECT 41, achievement_id, game_id, NULL, 70, 0 FROM Achievement WHERE name = 'Shardbearer Slayer';")
+w("INSERT INTO User_Achievement (user_game_id, achievement_id, game_id, unlocked_at, progress, is_unlocked)")
+w("SELECT 42, achievement_id, game_id, '2026-10-01 12:00:00', 100, 1 FROM Achievement WHERE name = 'Out of the Underworld';")
+w("")
 
 # --------------------------------------------------- triggers (after the seed)
 AUDITED = {
     "User": (["user_id"], ["user_id", "username", "email", "role_id", "join_date",
                            "profile_picture", "deleted_at"]),
-    "Game": (["game_id"], ["game_id", "title", "release_date", "developer_id",
-                           "publisher_id", "deleted_at"]),
+    "Game": (["game_id"], ["game_id", "title", "release_date", "description", "cover_image",
+                           "is_upcoming", "developer_id", "publisher_id", "deleted_at"]),
     "User_Game": (["user_game_id"], ["user_game_id", "user_id", "game_id", "platform_id",
                                      "purchase_date", "purchase_price", "baseline_hours",
                                      "status_id", "started_at", "completed_at",
@@ -675,6 +716,18 @@ for ev in ("UPDATE", "DELETE"):
     w("    IF COALESCE(@gv_allow_audit_scrub, 0) <> 1 THEN")
     w("        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'FORBIDDEN: Audit_Log is append-only';")
     w("    END IF;")
+    w("END$$")
+w("DELIMITER ;")
+w("")
+w("-- Server-side age guard: block age-ineligible collection entries even if UI checks are bypassed.")
+w("DELIMITER $$")
+for event, verb in (("bi", "INSERT"), ("bu", "UPDATE")):
+    w(f"CREATE TRIGGER trg_user_game_age_guard_{event} BEFORE {verb} ON User_Game FOR EACH ROW")
+    w("BEGIN")
+    w("  DECLARE v_age INT DEFAULT 99; DECLARE v_min_age INT DEFAULT 0;")
+    w("  SELECT COALESCE(TIMESTAMPDIFF(YEAR,date_of_birth,CURDATE()),99) INTO v_age FROM User WHERE user_id=NEW.user_id;")
+    w("  SELECT COALESCE(MAX(ar.minimum_age),0) INTO v_min_age FROM Game_Age_Rating gar JOIN Age_Rating ar ON ar.age_rating_id=gar.age_rating_id WHERE gar.game_id=NEW.game_id;")
+    w("  IF v_age < v_min_age THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='FORBIDDEN: this game is restricted by your age profile'; END IF;")
     w("END$$")
 w("DELIMITER ;")
 w("")

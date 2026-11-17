@@ -120,6 +120,7 @@ CREATE TABLE User (
     last_login_at      DATETIME      NULL,
     join_date          DATE          NOT NULL DEFAULT (CURRENT_DATE),
     profile_picture    VARCHAR(500)  NULL,
+    date_of_birth      DATE          NULL,
     deleted_at         TIMESTAMP     NULL DEFAULT NULL,
     created_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at         TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -131,6 +132,37 @@ CREATE TABLE User (
     CONSTRAINT chk_user_email    CHECK (email LIKE '%_@_%.__%'),
     CONSTRAINT chk_user_failed   CHECK (failed_login_count >= 0)
 ) ENGINE=InnoDB;
+
+-- Friend relationships and in-app notifications ----------------------
+CREATE TABLE Friendship (
+    friendship_id INT NOT NULL AUTO_INCREMENT,
+    requester_id INT NOT NULL,
+    recipient_id INT NOT NULL,
+    status ENUM('PENDING','ACCEPTED') NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (friendship_id),
+    UNIQUE KEY uq_friend_request (requester_id, recipient_id),
+    CONSTRAINT fk_friend_requester FOREIGN KEY (requester_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_friend_recipient FOREIGN KEY (recipient_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT chk_friend_not_self CHECK (requester_id <> recipient_id),
+    INDEX idx_friend_recipient_status (recipient_id, status)
+) ENGINE=InnoDB;
+
+CREATE TABLE Notification (
+    notification_id BIGINT NOT NULL AUTO_INCREMENT,
+    recipient_id INT NOT NULL,
+    actor_id INT NULL,
+    notification_type VARCHAR(40) NOT NULL,
+    message VARCHAR(255) NOT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (notification_id),
+    CONSTRAINT fk_notification_recipient FOREIGN KEY (recipient_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_notification_actor FOREIGN KEY (actor_id) REFERENCES User(user_id) ON DELETE SET NULL,
+    INDEX idx_notification_recipient (recipient_id, is_read, created_at)
+) ENGINE=InnoDB;
+
 
 -- Table 2: Developer -------------------------------------------------
 CREATE TABLE Developer (
@@ -215,6 +247,7 @@ CREATE TABLE Game (
     release_date DATE         NULL,
     description  TEXT         NULL,
     cover_image  VARCHAR(500) NULL,
+    is_upcoming  TINYINT(1) NOT NULL DEFAULT 0,
     developer_id INT          NULL,
     publisher_id INT          NULL,
     deleted_at   TIMESTAMP    NULL DEFAULT NULL,
@@ -228,6 +261,29 @@ CREATE TABLE Game (
         REFERENCES Publisher (publisher_id) ON DELETE SET NULL ON UPDATE RESTRICT,
     INDEX idx_game_title (title),
     FULLTEXT INDEX ft_game_search (title, description)
+) ENGINE=InnoDB;
+
+-- Game screenshots (URLs can point to Steam/CDN or admin-managed media) --
+CREATE TABLE Game_Screenshot (
+    screenshot_id INT NOT NULL AUTO_INCREMENT,
+    game_id INT NOT NULL,
+    image_url VARCHAR(500) NOT NULL,
+    caption VARCHAR(180) NULL,
+    sort_order SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (screenshot_id),
+    CONSTRAINT fk_screenshot_game FOREIGN KEY (game_id) REFERENCES Game(game_id) ON DELETE CASCADE,
+    INDEX idx_screenshot_game (game_id, sort_order)
+) ENGINE=InnoDB;
+
+CREATE TABLE Wishlist (
+    wishlist_id BIGINT NOT NULL AUTO_INCREMENT,
+    user_id INT NOT NULL,
+    game_id INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (wishlist_id),
+    UNIQUE KEY uq_wishlist_user_game (user_id, game_id),
+    CONSTRAINT fk_wishlist_user FOREIGN KEY (user_id) REFERENCES User(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_wishlist_game FOREIGN KEY (game_id) REFERENCES Game(game_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- Table 9: Game_Genre (Game M:N Genre) --------------------------------
@@ -366,6 +422,7 @@ CREATE TABLE Achievement (
     description    VARCHAR(255) NULL,
     points         INT          NOT NULL DEFAULT 0,
     is_hidden      BOOLEAN      NOT NULL DEFAULT FALSE,
+    rarity         ENUM('COMMON','RARE','EPIC','LEGENDARY') NOT NULL DEFAULT 'COMMON',
     created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT pk_achievement PRIMARY KEY (achievement_id),
