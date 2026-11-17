@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env: { MYSQL_ROOT_PASSWORD: root }
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot" --health-interval=10s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21, cache: maven }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Database tests
+        run: |
+          sudo apt-get install -y -qq mysql-client
+          MYSQL_CLI="mysql -h127.0.0.1 -uroot -proot" python3 -I database/tests/run_db_tests.py
+      - name: Backend tests
+        working-directory: backend
+        env: { DB_URL: "jdbc:mariadb://127.0.0.1:3306/gamevault_db", DB_PASSWORD: change-me-app-Passw0rd }
+        run: mvn -B verify
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm ci && npm test

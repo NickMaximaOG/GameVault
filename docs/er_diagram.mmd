@@ -1,0 +1,200 @@
+erDiagram
+    Achievement {
+        int achievement_id PK
+        int game_id FK,UK
+        varchar name UK
+        varchar description
+        int points
+        tinyint is_hidden
+        timestamp created_at
+        timestamp updated_at
+    }
+    Age_Rating {
+        int age_rating_id PK
+        varchar label UK
+        varchar rating_authority UK
+        varchar description
+        tinyint minimum_age
+        timestamp created_at
+        timestamp updated_at
+    }
+    Audit_Log {
+        bigint audit_id PK
+        varchar table_name
+        varchar record_pk
+        enum action
+        int changed_by
+        timestamp changed_at
+        json old_values
+        json new_values
+    }
+    Auth_Session {
+        bigint session_id PK
+        int user_id FK
+        char token_hash UK
+        timestamp created_at
+        datetime expires_at
+        datetime revoked_at
+        varchar ip_address
+        varchar user_agent
+    }
+    Collection_Status {
+        tinyint status_id PK
+        varchar name UK
+        tinyint sort_order
+    }
+    Developer {
+        int developer_id PK
+        varchar name UK
+        varchar country
+        varchar website
+        timestamp created_at
+        timestamp updated_at
+    }
+    Game {
+        int game_id PK
+        varchar title UK
+        date release_date UK
+        text description
+        varchar cover_image
+        int developer_id FK
+        int publisher_id FK
+        timestamp deleted_at
+        timestamp created_at
+        timestamp updated_at
+    }
+    Game_Age_Rating {
+        int game_id PK,FK
+        varchar rating_authority PK,FK
+        int age_rating_id FK
+    }
+    Game_Genre {
+        int game_id PK,FK
+        int genre_id PK,FK
+    }
+    Game_Mode {
+        int mode_id PK
+        varchar name UK
+        varchar description
+        timestamp created_at
+        timestamp updated_at
+    }
+    Game_Mode_Map {
+        int game_id PK,FK
+        int mode_id PK,FK
+    }
+    Game_Platform {
+        int game_id PK,FK
+        int platform_id PK,FK
+        date platform_release_date
+    }
+    Genre {
+        int genre_id PK
+        varchar name UK
+        varchar description
+        timestamp created_at
+        timestamp updated_at
+    }
+    Platform {
+        int platform_id PK
+        varchar name UK
+        varchar manufacturer
+        smallint release_year
+        timestamp created_at
+        timestamp updated_at
+    }
+    Playtime_Session {
+        bigint session_id PK
+        int user_game_id FK
+        datetime started_at
+        int duration_minutes
+        varchar note
+        timestamp created_at
+    }
+    Publisher {
+        int publisher_id PK
+        varchar name UK
+        varchar country
+        varchar website
+        timestamp created_at
+        timestamp updated_at
+    }
+    Rating {
+        int rating_id PK
+        int user_id FK,UK
+        int game_id FK,UK
+        tinyint rating
+        text review_text
+        date review_date
+        timestamp deleted_at
+        int row_version
+        timestamp created_at
+        timestamp updated_at
+    }
+    Role {
+        tinyint role_id PK
+        varchar name UK
+        varchar description
+    }
+    User {
+        int user_id PK
+        varchar username UK
+        varchar email UK
+        varchar password_hash
+        tinyint role_id FK
+        smallint failed_login_count
+        datetime locked_until
+        datetime last_login_at
+        date join_date
+        varchar profile_picture
+        timestamp deleted_at
+        timestamp created_at
+        timestamp updated_at
+    }
+    User_Achievement {
+        int user_game_id PK,FK
+        int achievement_id PK,FK
+        int game_id FK
+        timestamp unlocked_at
+        decimal progress
+        tinyint is_unlocked
+        timestamp created_at
+        timestamp updated_at
+    }
+    User_Game {
+        int user_game_id PK
+        int user_id FK,UK
+        int game_id FK,UK
+        int platform_id FK,UK
+        date purchase_date
+        decimal purchase_price
+        decimal baseline_hours
+        tinyint status_id FK
+        date started_at
+        date completed_at
+        timestamp deleted_at
+        int row_version
+        timestamp created_at
+        timestamp updated_at
+    }
+    Game ||--o{ Achievement : "game_id"
+    User ||--o{ Auth_Session : "user_id"
+    Developer ||--o{ Game : "developer_id"
+    Publisher ||--o{ Game : "publisher_id"
+    Age_Rating ||--o{ Game_Age_Rating : "age_rating_id_rating_authority"
+    Game ||--o{ Game_Age_Rating : "game_id"
+    Game ||--o{ Game_Genre : "game_id"
+    Genre ||--o{ Game_Genre : "genre_id"
+    Game ||--o{ Game_Mode_Map : "game_id"
+    Game_Mode ||--o{ Game_Mode_Map : "mode_id"
+    Game ||--o{ Game_Platform : "game_id"
+    Platform ||--o{ Game_Platform : "platform_id"
+    User_Game ||--o{ Playtime_Session : "user_game_id"
+    Game ||--o{ Rating : "game_id"
+    User ||--o{ Rating : "user_id"
+    Role ||--o{ User : "role_id"
+    Achievement ||--o{ User_Achievement : "achievement_id_game_id"
+    User_Game ||--o{ User_Achievement : "user_game_id_game_id"
+    Collection_Status ||--o{ User_Game : "status_id"
+    Game_Platform ||--o{ User_Game : "game_id_platform_id"
+    User ||--o{ User_Game : "user_id"

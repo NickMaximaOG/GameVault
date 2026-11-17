@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Standard Maven build for your own machine or CI. NOTE: this file was written in a sandbox that could not reach
+  Maven Central, so it has not been executed there. The code itself is compiled and tested with the apt-based
+  build.sh. If `mvn verify` complains about a version, bump that dependency; no source change is needed.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.gamevault</groupId>
+  <artifactId>gamevault-api</artifactId>
+  <version>2.0.0</version>
+  <packaging>jar</packaging>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <jackson.version>2.17.2</jackson.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>org.mariadb.jdbc</groupId><artifactId>mariadb-java-client</artifactId><version>2.7.12</version></dependency>
+    <dependency><groupId>com.zaxxer</groupId><artifactId>HikariCP</artifactId><version>5.1.0</version></dependency>
+    <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId><version>2.0.13</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>5.10.3</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId><version>3.3.1</version>
+        <configuration><argLine>-Duser.timezone=UTC</argLine></configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-shade-plugin</artifactId><version>3.6.0</version>
+        <executions><execution><phase>package</phase><goals><goal>shade</goal></goals>
+          <configuration>
+            <transformers><transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+              <mainClass>com.gamevault.App</mainClass></transformer>
+              <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/></transformers>
+            <filters><filter><artifact>*:*</artifact><excludes><exclude>META-INF/*.SF</exclude><exclude>META-INF/*.DSA</exclude><exclude>META-INF/*.RSA</exclude></excludes></filter></filters>
+          </configuration></execution></executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

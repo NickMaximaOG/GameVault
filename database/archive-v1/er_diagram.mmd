@@ -1,0 +1,126 @@
+erDiagram
+    %% GameVault ER diagram (Mermaid). Paste into https://mermaid.live or any Mermaid renderer.
+    %% Notation: ||--o{ = one-to-many (child optional); |o--o{ = optional parent.
+    %% PK primary key, FK foreign key, UK unique. Composite keys are noted in comments.
+
+    User ||--o{ User_Game : "owns / tracks"
+    User ||--o{ Rating : "writes"
+    Game ||--o{ User_Game : "appears in collections"
+    Platform ||--o{ User_Game : "played on"
+    Game_Platform ||--o{ User_Game : "must be supported (composite FK)"
+    Developer |o--o{ Game : "develops"
+    Publisher |o--o{ Game : "publishes"
+    Age_Rating |o--o{ Game : "classifies"
+    Game ||--o{ Game_Genre : "has"
+    Genre ||--o{ Game_Genre : "tags"
+    Game ||--o{ Game_Platform : "released on"
+    Platform ||--o{ Game_Platform : "supports"
+    Game ||--o{ Game_Mode_Map : "offers"
+    Game_Mode ||--o{ Game_Mode_Map : "available in"
+    Game ||--o{ Rating : "is rated by"
+    Game ||--o{ Achievement : "defines"
+    User_Game ||--o{ User_Achievement : "tracks progress"
+    Achievement ||--o{ User_Achievement : "progress recorded for"
+
+    User {
+        int user_id PK
+        varchar username UK
+        varchar email UK
+        varchar password_hash
+        date join_date
+        varchar profile_picture "nullable URL"
+    }
+    Developer {
+        int developer_id PK
+        varchar name UK
+        varchar country "nullable"
+        varchar website "nullable"
+    }
+    Publisher {
+        int publisher_id PK
+        varchar name UK
+        varchar country "nullable"
+        varchar website "nullable"
+    }
+    Genre {
+        int genre_id PK
+        varchar name UK
+        varchar description "nullable"
+    }
+    Platform {
+        int platform_id PK
+        varchar name UK
+        varchar manufacturer "nullable"
+        smallint release_year "nullable"
+    }
+    Age_Rating {
+        int age_rating_id PK
+        varchar label "UK with rating_authority"
+        varchar rating_authority "UK with label"
+        varchar description "nullable"
+        tinyint minimum_age "0 to 21"
+    }
+    Game_Mode {
+        int mode_id PK
+        varchar name UK
+        varchar description "nullable"
+    }
+    Game {
+        int game_id PK
+        varchar title "UK with release_date"
+        date release_date "nullable"
+        text description "nullable"
+        varchar cover_image "nullable URL"
+        int developer_id FK "nullable, SET NULL"
+        int publisher_id FK "nullable, SET NULL"
+        int age_rating_id FK "nullable, RESTRICT"
+    }
+    Game_Genre {
+        int game_id PK, FK
+        int genre_id PK, FK
+    }
+    Game_Platform {
+        int game_id PK, FK
+        int platform_id PK, FK
+        date platform_release_date "nullable"
+    }
+    Game_Mode_Map {
+        int game_id PK, FK
+        int mode_id PK, FK
+    }
+    User_Game {
+        int user_game_id PK
+        int user_id FK, UK
+        int game_id FK, UK
+        int platform_id FK, UK
+        date purchase_date "nullable"
+        decimal purchase_price "default 0, >= 0"
+        decimal playtime_hours "default 0, >= 0"
+        enum status "Backlog Playing Completed On_Hold Dropped"
+        date started_at "nullable"
+        date completed_at "set only when Completed"
+    }
+    Rating {
+        int rating_id PK
+        int user_id FK, UK
+        int game_id FK, UK
+        tinyint rating "1 to 10"
+        text review_text "nullable"
+        date review_date
+    }
+    Achievement {
+        int achievement_id PK
+        int game_id FK, UK
+        varchar name "UK with game_id"
+        varchar description "nullable"
+        int points ">= 0"
+        boolean is_hidden "default false"
+    }
+    User_Achievement {
+        int user_game_id PK, FK
+        int achievement_id PK, FK
+        int game_id FK "same game as both parents"
+        timestamp unlocked_at "nullable"
+        decimal progress "0 to 100"
+        boolean is_unlocked "default false"
+    }

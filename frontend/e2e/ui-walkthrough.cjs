@@ -1,0 +1,30 @@
+const { chromium } = require('playwright');
+const out = (process.env.SHOT_DIR || '/tmp') + '/';
+(async () => {
+  const b = await chromium.launch();
+  const p = await (await b.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  const problems = [];
+  p.on('console', (m) => { if (['error', 'warning'].includes(m.type())) problems.push(m.type() + ': ' + m.text()); });
+  p.on('pageerror', (e) => problems.push('pageerror: ' + e.message));
+  const step = async (n, f) => { try { await f(); console.log('ok  ', n); } catch (e) { console.log('FAIL', n, '-', e.message.split('\n')[0]); } };
+  await p.goto('http://localhost:3000/');
+  await step('catalog renders 12 cards', async () => { await p.waitForSelector('.case'); const n = await p.locator('.case').count(); if (n !== 12) throw new Error('count ' + n); });
+  await p.screenshot({ path: out + '1-catalog.png' });
+  await step('genre filter', async () => { await p.click('.chip:has-text("RPG")'); await p.waitForTimeout(600); console.log('     cards:', await p.locator('.case').count()); });
+  await step('detail dialog', async () => { await p.locator('.case').first().click(); await p.waitForSelector('dialog[open] .dlg-body'); await p.screenshot({ path: out + '2-detail.png' }); await p.click('dialog .dlg-head button'); });
+  await step('sign in', async () => {
+    await p.click('text=Sign in'); await p.fill('#f-user', 'aarav_k'); await p.fill('#f-pass', 'ChangeMe!2026'); await p.click('button[type=submit]');
+    await p.waitForSelector('.spine'); });
+  await p.screenshot({ path: out + '3-shelf.png', fullPage: true });
+  await step('change status', async () => { const s = p.locator('.entry select').first(); const cur = await s.inputValue(); await s.selectOption(cur === '2' ? '4' : '2'); await p.waitForSelector('.toast'); });
+  await step('log time', async () => { await p.locator('button:has-text("Log time")').first().click(); await p.fill('#l-min', '45'); await p.click('dialog button[type=submit]'); await p.waitForSelector('.toast:has-text("logged")'); });
+  await step('achievements dialog', async () => { await p.locator('button:has-text("Achievements"):not([disabled])').first().click(); await p.waitForSelector('dialog[open] .ach'); await p.screenshot({ path: out + '4-ach.png' }); await p.click('dialog .dlg-head button'); });
+  await step('dashboard', async () => { await p.click('nav >> text=Dashboard'); await p.waitForSelector('.tile'); await p.screenshot({ path: out + '5-dash.png' }); });
+  await step('ratings', async () => { await p.click('nav >> text=My ratings'); await p.waitForSelector('table, .empty'); });
+  await step('admin', async () => { await p.click('nav >> text=Admin'); await p.waitForSelector('.tag.INSERT, .tag.UPDATE, table'); await p.waitForTimeout(500); await p.screenshot({ path: out + '6-admin.png' }); });
+  await step('cookie HttpOnly', async () => { const c = (await p.context().cookies()).find((x) => x.name === 'gv_session'); if (!c?.httpOnly) throw new Error('cookie missing/not httponly'); });
+  await step('sign out', async () => { await p.click('text=Sign out'); await p.waitForSelector('text=Sign in'); });
+  await p.setViewportSize({ width: 390, height: 800 }); await p.goto('http://localhost:3000/#/catalog'); await p.waitForSelector('.case'); await p.screenshot({ path: out + '7-mobile.png' });
+  console.log('console problems:', problems.length ? problems : 'none');
+  await b.close();
+})();

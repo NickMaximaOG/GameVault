@@ -1,0 +1,39 @@
+# One command: docker compose --env-file .env up --build
+# Open http://localhost:3000 and sign in as aarav_k / ChangeMe!2026 (demo data; change before real use).
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    command: ["--character-set-server=utf8mb4", "--default-time-zone=+00:00", "--log-bin-trust-function-creators=1"]
+    volumes:
+      - dbdata:/var/lib/mysql
+      # files in this folder run once, in name order, on first start
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/security.sql:/docker-entrypoint-initdb.d/02_security.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  api:
+    build: ./backend
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:mariadb://db:3306/gamevault_db
+      DB_USER: ${DB_USER:-gv_app}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-3000}
+      TRUST_PROXY: "true"        # the Node server forwards the real client IP
+  web:
+    build: ./frontend
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      BACKEND_URL: http://api:8080
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+volumes:
+  dbdata:
