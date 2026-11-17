@@ -13,6 +13,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const COOKIE = 'gv_session';
@@ -39,7 +40,8 @@ export function createApp({ backendUrl, cookieSecure = false, trustProxy = false
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
-          styleSrc: ["'self'"],
+          styleSrc: ["'self'", 'https://fonts.googleapis.com'],
+          fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
           imgSrc: ["'self'", 'data:', 'https:'],
           connectSrc: ["'self'"],
           objectSrc: ["'none'"],
@@ -113,7 +115,10 @@ export function createApp({ backendUrl, cookieSecure = false, trustProxy = false
   });
 
   // ---- static app -------------------------------------------------------------------------------
-  app.use(express.static(path.join(here, 'public'), { maxAge: '5m', index: 'index.html' }));
+  const webRoot = existsSync(path.join(here, 'dist')) ? path.join(here, 'dist') : path.join(here, 'public');
+  app.use(express.static(webRoot, { maxAge: '5m', index: 'index.html' }));
+  // Keep old public assets available for backwards-compatible test/docs links.
+  if (webRoot !== path.join(here, 'public')) app.use(express.static(path.join(here, 'public'), { maxAge: '5m' }));
   app.use((_req, res) => fail(res, 404, 'not_found', 'Page not found'));
   return app;
 }
