@@ -5,11 +5,11 @@
 -- NEVER as root. CHANGE BOTH PASSWORDS before using this anywhere real, and
 -- replace '%' with the backend's host or subnet.
 --
---   gv_app     the backend. Reads views, executes stored procedures, and may
---              only touch User and Auth_Session directly (register / login /
---              sessions), with COLUMN-level grants. It cannot read or write
---              User_Game, Rating, Achievement progress, ... except through the
---              procedures, and it cannot change structure (no DDL).
+--   gv_app     the backend. Reads catalogue/reference tables and approved views,
+--              uses stored procedures for user-owned data, and has narrowly
+--              scoped portal grants for friendships, notifications, wishlists
+--              and admin-only catalogue management. It cannot read User_Game,
+--              Rating or User_Achievement directly and cannot run DDL.
 --   gv_report  read-only analytics over the views. No base tables, no
 --              credentials, no audit data.
 --
@@ -47,13 +47,17 @@ GRANT SELECT ON gamevault_db.Role              TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Game_Genre        TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Game_Platform     TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Game_Mode_Map     TO 'gv_app'@'%';
+GRANT SELECT ON gamevault_db.Developer         TO 'gv_app'@'%';
+GRANT SELECT ON gamevault_db.Publisher         TO 'gv_app'@'%';
+GRANT SELECT ON gamevault_db.Game_Screenshot   TO 'gv_app'@'%';
+GRANT SELECT ON gamevault_db.Game               TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Game_Age_Rating   TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Achievement       TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Playtime_Session  TO 'gv_app'@'%';
 GRANT SELECT ON gamevault_db.Audit_Log         TO 'gv_app'@'%';   -- admin screen; the API checks the role
 
 -- ---- gv_app: accounts and sessions (column-level) ---------------------------
-GRANT SELECT (user_id, username, email, password_hash, role_id,
+GRANT SELECT (user_id, username, email, password_hash, role_id, date_of_birth,
               failed_login_count, locked_until, deleted_at)
       ON gamevault_db.User TO 'gv_app'@'%';
 GRANT INSERT (username, email, password_hash)
@@ -62,7 +66,18 @@ GRANT UPDATE (failed_login_count, locked_until, last_login_at, password_hash)
       ON gamevault_db.User TO 'gv_app'@'%';
 GRANT SELECT, INSERT, UPDATE ON gamevault_db.Auth_Session TO 'gv_app'@'%';
 
--- ---- gv_app: every business write goes through a stored procedure -----------
+-- ---- gv_app: portal writes (admin role is enforced by the Java API) ----------
+GRANT SELECT, INSERT, UPDATE ON gamevault_db.Friendship TO 'gv_app'@'%';
+GRANT SELECT, INSERT, UPDATE ON gamevault_db.Notification TO 'gv_app'@'%';
+GRANT SELECT, INSERT, DELETE ON gamevault_db.Wishlist TO 'gv_app'@'%';
+GRANT INSERT, UPDATE ON gamevault_db.Game TO 'gv_app'@'%';
+GRANT INSERT, UPDATE, DELETE ON gamevault_db.Game_Genre TO 'gv_app'@'%';
+GRANT INSERT, UPDATE, DELETE ON gamevault_db.Game_Platform TO 'gv_app'@'%';
+GRANT INSERT, UPDATE, DELETE ON gamevault_db.Game_Age_Rating TO 'gv_app'@'%';
+GRANT INSERT, UPDATE, DELETE ON gamevault_db.Game_Screenshot TO 'gv_app'@'%';
+GRANT INSERT, UPDATE, DELETE ON gamevault_db.Achievement TO 'gv_app'@'%';
+
+-- ---- gv_app: stored procedures for user-owned data -------------------------
 GRANT EXECUTE ON gamevault_db.* TO 'gv_app'@'%';
 
 -- ---- gv_report: analytics only ------------------------------------------------

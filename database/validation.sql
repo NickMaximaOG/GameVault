@@ -31,6 +31,8 @@ FROM (
     UNION ALL SELECT 'Collection_Status',COUNT(*),   5 FROM Collection_Status
     UNION ALL SELECT 'Game_Age_Rating',  COUNT(*),  20 FROM Game_Age_Rating
     UNION ALL SELECT 'Playtime_Session', COUNT(*),  50 FROM Playtime_Session
+    UNION ALL SELECT 'Friendship', COUNT(*), 1 FROM Friendship
+    UNION ALL SELECT 'Game_Screenshot', COUNT(*), 10 FROM Game_Screenshot
 ) t;
 
 -- ---------------------------------------------------------------------
@@ -323,6 +325,12 @@ FROM (
 ) c;
 
 -- ---------------------------------------------------------------------
+-- V7b. Portal demo accounts and the underage profile.
+SELECT 'Portal demo accounts present' AS check_name,
+       (SELECT COUNT(*) FROM User WHERE username IN ('admin','NickMaxima','Dibu2007','Xlitz')) AS found,
+       4 AS expected,
+       IF((SELECT COUNT(*) FROM User WHERE username IN ('admin','NickMaxima','Dibu2007','Xlitz')) = 4, 'PASS', 'FAIL') AS result;
+
 -- V8. Constraint inventory (documents what the database enforces)
 -- ---------------------------------------------------------------------
 -- Foreign keys with their delete/update rules (expect 21 rows)
